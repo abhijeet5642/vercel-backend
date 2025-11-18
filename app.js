@@ -15,10 +15,38 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const feedbackRoutes = require('./routes/feedbackRoutes');
 
+// --- CORS Configuration ---
+const FRONTEND_URL = 'https://abhijeet5642-vercel-frontend.vercel.app';
+const allowedOrigins = [
+    FRONTEND_URL,
+    'http://localhost:3000' // For local development
+];
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        // OR requests from one of the explicitly allowed origins
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            // Block other origins
+            console.log('Blocked by CORS:', origin); 
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    // Crucial for passing cookies, Authorization headers, etc.
+    credentials: true, 
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    allowedHeaders: 'Content-Type,Authorization'
+};
+// --------------------------
+
+
 const app = express();
 
 // Middleware
-app.use(cors());
+// Apply the specific CORS configuration
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
