@@ -1,14 +1,6 @@
 const Event = require('../models/Event');
 const User = require('../models/User');
-const path = require('path');
-const fs = require('fs');
-
-// Helper function to delete uploaded file if error occurs
-const deleteUploadedFile = (filePath) => {
-  if (filePath && fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
-};
+const uploadToCloudinary = require('../utils/cloudinary');
 
 // Create a new event
 exports.createEvent = async (req, res) => {
@@ -29,7 +21,6 @@ exports.createEvent = async (req, res) => {
 
     // Validate required fields
     if (!title || !description || !category || !location || !start_date || !end_date || !registration_limit) {
-      if (req.file) deleteUploadedFile(req.file.path);
       return res.status(400).json({ 
         error: 'Please provide all required fields: title, description, category, location, start_date, end_date, registration_limit' 
       });
@@ -41,32 +32,33 @@ exports.createEvent = async (req, res) => {
     const now = new Date();
 
     if (startDate <= now) {
-      if (req.file) deleteUploadedFile(req.file.path);
       return res.status(400).json({ error: 'Start date must be in the future' });
     }
 
     if (endDate <= startDate) {
-      if (req.file) deleteUploadedFile(req.file.path);
       return res.status(400).json({ error: 'End date must be after start date' });
     }
 
     // Get the creating user
     const creatingUser = await User.findById(req.user.id);
     if (!creatingUser) {
-      if (req.file) deleteUploadedFile(req.file.path);
       return res.status(404).json({ error: 'User not found' });
     }
 
     // For now, use the creating user's college info
-    // In future, you might want to map college_name to a separate colleges collection
-    const collegeId = creatingUser._id; // Using user ID as college reference for now
+    const collegeId = creatingUser._id; 
     const finalCollegeName = college_name || creatingUser.college;
 
-    // Handle image upload
-    let imagePath = null;
+    // Handle image upload to Cloudinary
+    let imageUrl = null;
     if (req.file) {
-      // Store relative path for serving files
-      imagePath = `/uploads/events/${req.file.filename}`;
+      try {
+        const result = await uploadToCloudinary(req.file.buffer);
+        imageUrl = result.secure_url;
+      } catch (uploadError) {
+        console.error('Cloudinary Upload Error:', uploadError);
+        return res.status(500).json({ error: 'Failed to upload image to cloud storage' });
+      }
     }
 
     // Process tags if provided
@@ -92,7 +84,7 @@ exports.createEvent = async (req, res) => {
       created_by: req.user.id,
       registration_limit: parseInt(registration_limit),
       price: parseFloat(price) || 0,
-      image: imagePath,
+      image: imageUrl, // Stores the Cloudinary URL
       tags: processedTags
     };
 
@@ -100,7 +92,6 @@ exports.createEvent = async (req, res) => {
     if (registration_deadline) {
       const regDeadline = new Date(registration_deadline);
       if (regDeadline > startDate) {
-        if (req.file) deleteUploadedFile(req.file.path);
         return res.status(400).json({ error: 'Registration deadline must be before or same as start date' });
       }
       eventData.registration_deadline = regDeadline;
@@ -130,16 +121,14 @@ exports.createEvent = async (req, res) => {
       });
     } catch (logError) {
       console.error('Error creating activity log:', logError);
-      // Don't fail the request if logging fails
     }
 
-    // Send notifications to all students about the new event
+    // Send notifications
     try {
       const { notifyStudentsAboutNewEvent } = require('./notificationController');
       await notifyStudentsAboutNewEvent(event);
     } catch (notifError) {
       console.error('Failed to send notifications:', notifError);
-      // Continue even if notification fails
     }
 
     res.status(201).json({
@@ -152,9 +141,6 @@ exports.createEvent = async (req, res) => {
 
   } catch (error) {
     console.error('Create event error:', error);
-    
-    // Delete uploaded file if there was an error
-    if (req.file) deleteUploadedFile(req.file.path);
     
     // Handle validation errors
     if (error.name === 'ValidationError') {
@@ -334,12 +320,16 @@ exports.updateEvent = async (req, res) => {
 
     // Handle new image upload
     if (req.file) {
-      // Delete old image if exists
-      if (event.image) {
-        const oldImagePath = path.join(__dirname, '..', 'uploads', 'events', path.basename(event.image));
-        deleteUploadedFile(oldImagePath);
+      try {
+        // Upload new image to Cloudinary
+        const result = await uploadToCloudinary(req.file.buffer);
+        updates.image = result.secure_url;
+        // Note: Optionally, you could delete the old image from Cloudinary here 
+        // if you had the public_id, but it's not strictly required.
+      } catch (uploadError) {
+         console.error('Cloudinary Upload Error:', uploadError);
+         return res.status(500).json({ error: 'Failed to upload new image' });
       }
-      updates.image = `/uploads/events/${req.file.filename}`;
     }
 
     const updatedEvent = await Event.findByIdAndUpdate(
@@ -358,8 +348,6 @@ exports.updateEvent = async (req, res) => {
 
   } catch (error) {
     console.error('Update event error:', error);
-    
-    if (req.file) deleteUploadedFile(req.file.path);
     
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => err.message);
@@ -392,11 +380,9 @@ exports.deleteEvent = async (req, res) => {
       return res.status(400).json({ error: 'Cannot delete active event with registrations' });
     }
 
-    // Delete associated image file
-    if (event.image) {
-      const imagePath = path.join(__dirname, '..', 'uploads', 'events', path.basename(event.image));
-      deleteUploadedFile(imagePath);
-    }
+    // Note: We removed local file deletion. 
+    // To delete from Cloudinary, you'd need the public_id. 
+    // For now, we just remove the database entry.
 
     // Store event details before deletion for logging
     const eventTitle = event.title;
@@ -420,7 +406,6 @@ exports.deleteEvent = async (req, res) => {
       });
     } catch (logError) {
       console.error('Error creating activity log:', logError);
-      // Don't fail the request if logging fails
     }
 
     res.status(200).json({

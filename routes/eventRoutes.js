@@ -4,30 +4,13 @@ const eventController = require('../controllers/eventController');
 const registrationController = require('../controllers/registrationController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-// Create uploads directory if it doesn't exist
-const uploadDir = path.join(__dirname, '..', 'uploads', 'events');
-if (!fs.existsSync(path.join(__dirname, '..', 'uploads'))) {
-  fs.mkdirSync(path.join(__dirname, '..', 'uploads'));
-}
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// ---------------------------------------------------------
+// 1. CONFIGURATION FOR VERCEL (MEMORY STORAGE)
+// ---------------------------------------------------------
 
-// Configure multer for image upload
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    // Create unique filename with timestamp
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const fileExtension = path.extname(file.originalname);
-    cb(null, file.fieldname + '-' + uniqueSuffix + fileExtension);
-  }
-});
+// Use memoryStorage so files are stored in RAM (Buffer), not on the hard drive
+const storage = multer.memoryStorage();
 
 // File filter for images only
 const fileFilter = (req, file, cb) => {
@@ -67,11 +50,16 @@ const handleUploadErrors = (err, req, res, next) => {
   next();
 };
 
+// ---------------------------------------------------------
+// 2. ROUTES
+// ---------------------------------------------------------
+
 // PUBLIC ROUTES (no authentication required)
 
 // Debug route to check events in database
 router.get('/debug', async (req, res) => {
   try {
+    // Note: Ensure the path to your model is correct relative to this file
     const Event = require('../models/Event');
     const events = await Event.find().limit(5);
     res.json({
@@ -108,7 +96,7 @@ router.get('/college/:collegeId', eventController.getEventsByCollege);
 router.post('/create', 
   protect, 
   restrictTo('college_admin', 'super_admin'),
-  upload.single('image'),
+  upload.single('image'), // This now puts the file in req.file.buffer
   handleUploadErrors,
   eventController.createEvent
 );
@@ -140,26 +128,16 @@ router.get('/admin/stats',
   eventController.getEventStats
 );
 
-// Route to serve uploaded images
-router.get('/uploads/:filename', (req, res) => {
-  const filename = req.params.filename;
-  const filePath = path.join(__dirname, '..', 'uploads', 'events', filename);
-  
-  // Check if file exists
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'Image not found' });
-  }
-  
-  // Set appropriate headers
-  res.setHeader('Content-Type', 'image/jpeg'); // Default, will be overridden by sendFile
-  res.sendFile(filePath);
-});
+/* NOTE: I removed the '/uploads/:filename' route. 
+   Since we are not saving to disk, we cannot serve files from disk.
+   Your frontend should now use the Cloudinary URL stored in the database.
+*/
 
 // Registration routes
 
 // Get registration status for current user
 router.get('/:eventId/registration/status', protect, registrationController.getRegistrationStatus);
-// Make sure this route exists and is in the correct position
+
 router.post('/verify-payment-registration', 
   protect,
   registrationController.verifyPaymentAndCreateRegistration
@@ -168,12 +146,10 @@ router.post('/verify-payment-registration',
 // Register for an event
 router.post('/:eventId/register', protect, registrationController.registerForEvent);
 
-
-
 // Get all registrations for current user
 router.get('/user/registrations', protect, registrationController.getUserRegistrations);
 
-// Get all registrations across all events (admin only) - MUST be before /:eventId/registrations
+// Get all registrations across all events (admin only)
 router.get('/all/registrations', 
   protect, 
   restrictTo('college_admin', 'super_admin'),
