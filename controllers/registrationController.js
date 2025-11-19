@@ -67,7 +67,7 @@ exports.registerForEvent = async (req, res) => {
       }
 
       try {
-        const frontendBase = process.env.FRONTEND_URL || 'https://campuseventhub-1.onrender.com';
+        const frontendBase = process.env.FRONTEND_URL || 'https://vercel-frontend-gilt-beta.vercel.app/';
         
         // Validate required data for Stripe session
         if (!event.title || !event._id) {
